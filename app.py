@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 from flask import Flask, request, render_template, redirect, url_for
-import time # Import the time module for logging
+import time
 
 # --- Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -13,9 +13,7 @@ ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Ensure the upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 
 # --- Helper Functions ---
 def allowed_file(filename):
@@ -32,10 +30,6 @@ def find_data_start_row(df):
 
 # --- Core Data Processing Logic ---
 def process_file(file_path):
-    """
-    Takes a file path, performs all analysis, and returns the results in a dictionary.
-    Includes timing logs and optimizations for CSV and data downsampling.
-    """
     start_time = time.time()
     filename = os.path.basename(file_path)
     print(f"[{start_time:.2f}] --- Starting file processing for: {filename} ---")
@@ -82,7 +76,9 @@ def process_file(file_path):
         stop_dist = stop_row['CUMULATIVE_DISTANCE']; stop_time = stop_row['DATETIME']
         stop_analysis_results.append(f"Stop detected at {stop_dist:.2f} km (Time: {stop_time.strftime('%H:%M:%S')}).")
         pre_stop_data = data_df.loc[:index]
-        for meters_before in [50, 100]:
+        
+        # --- THIS IS THE MODIFIED LINE ---
+        for meters_before in [1, 10, 50, 100]:
             target_dist = stop_dist - (meters_before / 1000.0)
             if target_dist > 0:
                 closest_idx = (pre_stop_data['CUMULATIVE_DISTANCE'] - target_dist).abs().idxmin()
@@ -104,10 +100,7 @@ def process_file(file_path):
 
     # --- Data Downsampling for Plotting ---
     plot_df = data_df.set_index('DATETIME')
-    
-    # --- THIS IS THE FIXED LINE ---
     plot_df = plot_df.resample('10S').mean(numeric_only=True).reset_index()
-    
     plot_df.dropna(inplace=True)
     t_after_resample = time.time()
     print(f"[{t_after_resample:.2f}] Data resampled for plotting. Time taken: {t_after_resample - t_after_analysis:.2f}s")

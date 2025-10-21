@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.io as pio
 from flask import Flask, request, render_template, redirect, url_for
 import time
-import plotly.graph_objects as go
+import plotly.graph_objects as go 
 
 # --- Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -77,24 +77,26 @@ def process_file(file_path):
     for index, stop_row in stop_events.iterrows():
         stop_dist = stop_row['CUMULATIVE_DISTANCE']; stop_time = stop_row['DATETIME']
         stop_time_str = stop_time.strftime('%H:%M:%S')
-        stop_analysis_results.append(f"Stop detected at {stop_dist:.2f} km (Time: {stop_time_str}).")
+        stop_analysis_results.append(f"\nStop detected at {stop_dist:.2f} km (Time: {stop_time_str}).\n")
         
         target_dist_1km_before = stop_dist - 1.0 
         pre_stop_data = data_df.loc[:index].copy() 
         start_index = (pre_stop_data['CUMULATIVE_DISTANCE'] - target_dist_1km_before).abs().idxmin()
         
         decel_segment = data_df.loc[start_index:index].copy()
-        if not decel_segment.empty:
-            decel_segment['RELATIVE_DISTANCE'] = decel_segment['CUMULATIVE_DISTANCE'] - decel_segment['CUMULATIVE_DISTANCE'].min()
-            decel_segment['STOP_TIME'] = stop_time_str
-            deceleration_data_frames.append(decel_segment)
+        
+        # --- NEW LOGIC FOR REVERSED AXIS ---
+        # Instead of distance *from* 1km ago, we calculate distance *to* the stop
+        decel_segment['DISTANCE_TO_STOP'] = (stop_dist - decel_segment['CUMULATIVE_DISTANCE']) * 1000 # in meters
+        decel_segment['STOP_TIME'] = stop_time_str
+        deceleration_data_frames.append(decel_segment)
         
         for meters_before in [1, 10, 50, 100]:
             target_dist = stop_dist - (meters_before / 1000.0)
             if target_dist > 0:
                 closest_idx = (pre_stop_data['CUMULATIVE_DISTANCE'] - target_dist).abs().idxmin()
                 speed = pre_stop_data.loc[closest_idx, 'SPEED']; dist = pre_stop_data.loc[closest_idx, 'CUMULATIVE_DISTANCE']; time_before = pre_stop_data.loc[closest_idx, 'DATETIME']
-                stop_analysis_results.append(f"  - Speed ~{meters_before}m before: {speed} Kmph (at {dist:.2f} km, Time: {time_before.strftime('%H:%M:%S')})")
+                stop_analysis_results.append(f"  - Speed ~{meters_before}m before: {speed} Kmph (at {dist:.2f} km, Time: {time_before.strftime('%H:%M:%S')}) \n")
                 points_before_stop.append((dist, speed))
 
     t_after_analysis = time.time()
@@ -115,13 +117,14 @@ def process_file(file_path):
     plot_df.dropna(inplace=True)
     t_after_resample = time.time()
     print(f"[{t_after_resample:.2f}] Data resampled for plotting. Time taken: {t_after_resample - t_after_analysis:.2f}s")
-
-    # --- Generate Interactive Plots with Plotly ---
+    
+    # Plot 1: Speed vs. Time (General)
     fig_time_speed = px.line(plot_df, x='DATETIME', y='SPEED', title="Speed vs. Time (Resampled to 10s intervals)", labels={'DATETIME': 'Time', 'SPEED': 'Speed (Kmph)'})
     graph1_html = pio.to_html(fig_time_speed, full_html=False)
     t_after_graph1 = time.time()
     print(f"[{t_after_graph1:.2f}] Graph 1 generated. Time taken: {t_after_graph1 - t_after_resample:.2f}s")
     
+    # Plot 2: Speed vs. Cumulative Distance (General)
     fig_dist_speed = px.line(data_df, x='CUMULATIVE_DISTANCE', y='SPEED', title="Speed vs. Cumulative Distance", labels={'CUMULATIVE_DISTANCE': 'Cumulative Distance (Km)', 'SPEED': 'Speed (Kmph)'})
     if points_before_stop:
         dists, speeds = zip(*points_before_stop)
@@ -130,26 +133,28 @@ def process_file(file_path):
     t_after_graph2 = time.time()
     print(f"[{t_after_graph2:.2f}] Graph 2 generated. Time taken: {t_after_graph2 - t_after_graph1:.2f}s")
     
-    # --- Plot 3: Deceleration Profile ---
+    # Plot 3: Deceleration Profile
     decel_plot_html = ""
+    t_before_decel_plot = time.time()
     if deceleration_data_frames:
         fig_decel = go.Figure()
         
         for df_segment in deceleration_data_frames:
             fig_decel.add_trace(go.Scatter(
-                x=df_segment['RELATIVE_DISTANCE'] * 1000,
+                # --- MODIFIED: Use the new DISTANCE_TO_STOP column ---
+                x=df_segment['DISTANCE_TO_STOP'],
                 y=df_segment['SPEED'],
                 mode='lines',
                 name=f"Stop at {df_segment['STOP_TIME'].iloc[0]}"
             ))
 
-        # --- THIS IS THE UPDATED SECTION ---
         fig_decel.update_layout(
             title="Deceleration Profile (1000m Before Stop)",
-            xaxis_title="Distance Before Stop (meters)",
+            xaxis_title="Distance To Stop (meters)",
             yaxis_title="Speed (Kmph)",
             legend_title="Stop Time",
-            #xaxis=dict(autorange='reversed') # This line reverses the x-axis
+            # --- THIS IS THE KEY LINE FOR THE FIX ---
+            xaxis_autorange='reversed'
         )
         decel_plot_html = pio.to_html(fig_decel, full_html=False)
 
